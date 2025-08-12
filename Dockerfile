@@ -1,10 +1,16 @@
-FROM node:20-alpine AS base
+FROM node:20-slim AS base
 
 # Set working directory
 WORKDIR /app
 
 # Install system dependencies for building
-RUN apk add --no-cache libc6-compat python3 make g++
+RUN apt-get update && apt-get install -y \
+    python3 \
+    make \
+    g++ \
+    git \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 # Enable corepack and install pnpm
 RUN corepack enable pnpm
@@ -35,8 +41,9 @@ ENV WRANGLER_SEND_METRICS=false \
 RUN mkdir -p /root/.config/.wrangler && \
     echo '{"enabled":false}' > /root/.config/.wrangler/metrics.json
 
-# Build with increased memory limit
-RUN NODE_OPTIONS="--max-old-space-size=4096" pnpm run build
+# Build with increased memory limit and skip workerd by removing problematic package
+RUN rm -rf node_modules/.pnpm/@cloudflare+workerd-linux-64@*/node_modules/@cloudflare/workerd-linux-64/bin/workerd || true
+RUN NODE_OPTIONS="--max-old-space-size=4096" CI=true pnpm run build
 
 CMD [ "pnpm", "run", "dockerstart", "--", "--port", "3050"]
 
