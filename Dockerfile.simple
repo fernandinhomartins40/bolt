@@ -7,10 +7,10 @@ RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 # Diretório de trabalho
 WORKDIR /app
 
-# Copiar package.json e instalar apenas produção
+# Copiar package.json e instalar dependências ignorando scripts
 COPY package.json pnpm-lock.yaml ./
 RUN npm install -g pnpm@9.4.0
-RUN pnpm install --prod --frozen-lockfile
+RUN pnpm install --prod --frozen-lockfile --ignore-scripts
 
 # Copiar código fonte
 COPY . .
