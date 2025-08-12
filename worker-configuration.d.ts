@@ -18,4 +18,6 @@ interface Env {
   XAI_API_KEY: string;
   PERPLEXITY_API_KEY: string;
   AWS_BEDROCK_CONFIG: string;
+  MOONSHOT_API_KEY: string;
+  MOONSHOT_API_BASE_URL: string;
 }

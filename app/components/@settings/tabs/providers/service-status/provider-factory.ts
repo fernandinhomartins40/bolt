@@ -9,6 +9,7 @@ import { GroqStatusChecker } from './providers/groq';
 import { HuggingFaceStatusChecker } from './providers/huggingface';
 import { HyperbolicStatusChecker } from './providers/hyperbolic';
 import { MistralStatusChecker } from './providers/mistral';
+import { MoonshotStatusChecker } from './providers/moonshot';
 import { OpenRouterStatusChecker } from './providers/openrouter';
 import { PerplexityStatusChecker } from './providers/perplexity';
 import { TogetherStatusChecker } from './providers/together';
@@ -64,6 +65,12 @@ export class ProviderStatusCheckerFactory {
       headers: {},
       testModel: 'mistral-tiny',
     },
+    Moonshot: {
+      statusUrl: 'https://platform.moonshot.ai/',
+      apiUrl: 'https://api.moonshot.cn/v1/models',
+      headers: {},
+      testModel: 'moonshot-v1-8k',
+    },
     OpenRouter: {
       statusUrl: 'https://status.openrouter.ai/',
       apiUrl: 'https://openrouter.ai/api/v1/models',
@@ -114,6 +121,8 @@ export class ProviderStatusCheckerFactory {
         return new HyperbolicStatusChecker(config);
       case 'Mistral':
         return new MistralStatusChecker(config);
+      case 'Moonshot':
+        return new MoonshotStatusChecker(config);
       case 'OpenRouter':
         return new OpenRouterStatusChecker(config);
       case 'Perplexity':
