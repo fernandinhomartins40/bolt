@@ -1,0 +1,258 @@
+name: 🚀 Deploy Bolt AI
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '20'
+  VPS_HOST: '82.25.69.57'
+  VPS_USER: 'root'
+  DOMAIN: 'fuseloja.com.br'
+  APP_PORT: '3050'
+
+jobs:
+  build:
+    name: 🏗️ Build Application
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 📦 Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'pnpm'
+
+    - name: 🔧 Install pnpm
+      run: npm install -g pnpm
+
+    - name: 🔧 Install Dependencies
+      run: pnpm install
+
+    - name: 🏗️ Build Application
+      run: |
+        pnpm run build
+        echo "✅ Build completed successfully"
+
+  deploy:
+    name: 🚀 Deploy to VPS
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🚀 Deploy to VPS
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ env.VPS_HOST }}
+        username: ${{ env.VPS_USER }}
+        password: ${{ secrets.VPS_PASSWORD }}
+        port: 22
+        timeout: 10m
+        script: |
+          echo "🚀 Starting deployment of Bolt AI to ${{ env.DOMAIN }}..."
+          
+          # Create application directory
+          mkdir -p /opt/bolt-ai
+          cd /opt/bolt-ai
+          
+          # Install system dependencies (Docker and Docker Compose)
+          echo "📦 Installing system dependencies..."
+          apt update -y
+          apt install -y curl git wget unzip apt-transport-https ca-certificates gnupg lsb-release
+          
+          # Install Docker if not present
+          if ! command -v docker &> /dev/null; then
+            echo "🐳 Installing Docker..."
+            curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+            echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+            apt update
+            apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+            systemctl start docker
+            systemctl enable docker
+          fi
+          
+          # Install Docker Compose standalone if needed
+          if ! command -v docker-compose &> /dev/null; then
+            echo "🐳 Installing Docker Compose..."
+            curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+            chmod +x /usr/local/bin/docker-compose
+          fi
+          
+          # Verify Docker installation
+          echo "✅ Docker version: $(docker --version)"
+          echo "✅ Docker Compose version: $(docker-compose --version)"
+          
+          # Backup current deployment
+          if [ -d "current" ]; then
+            echo "📦 Creating backup..."
+            cp -r current backup_$(date +%Y%m%d_%H%M%S) 2>/dev/null || true
+            find . -name "backup_*" -type d -mtime +7 -exec rm -rf {} + 2>/dev/null || true
+          fi
+          
+          # Download repository
+          echo "📥 Downloading latest code..."
+          rm -rf bolt-new
+          
+          # Try git clone with GitHub token
+          if git clone https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git bolt-new; then
+            echo "✅ Git clone with token successful"
+          else
+            echo "❌ Git clone failed"
+            exit 1
+          fi
+          
+          echo "✅ Code updated successfully"
+          
+          # Stop existing containers
+          echo "🛑 Stopping existing containers..."
+          cd /opt/bolt-ai
+          if [ -f "current/docker-compose.yaml" ]; then
+            cd current
+            docker-compose down --remove-orphans || true
+            cd ..
+          fi
+          
+          # Clean up old containers and images
+          docker container prune -f || true
+          docker image prune -f || true
+          
+          # Update current symlink
+          rm -f current
+          ln -sf bolt-new current
+          
+          # Setup environment
+          echo "⚙️ Setting up environment..."
+          cd current
+          
+          # Copy environment variables
+          cat > .env.local << EOF
+          NODE_ENV=production
+          PORT=${{ env.APP_PORT }}
+          GROQ_API_KEY=\${GROQ_API_KEY:-}
+          HuggingFace_API_KEY=\${HuggingFace_API_KEY:-}
+          OPENAI_API_KEY=\${OPENAI_API_KEY:-}
+          ANTHROPIC_API_KEY=\${ANTHROPIC_API_KEY:-}
+          OPEN_ROUTER_API_KEY=\${OPEN_ROUTER_API_KEY:-}
+          GOOGLE_GENERATIVE_AI_API_KEY=\${GOOGLE_GENERATIVE_AI_API_KEY:-}
+          OLLAMA_API_BASE_URL=\${OLLAMA_API_BASE_URL:-}
+          XAI_API_KEY=\${XAI_API_KEY:-}
+          TOGETHER_API_KEY=\${TOGETHER_API_KEY:-}
+          TOGETHER_API_BASE_URL=\${TOGETHER_API_BASE_URL:-}
+          AWS_BEDROCK_CONFIG=\${AWS_BEDROCK_CONFIG:-}
+          VITE_LOG_LEVEL=info
+          DEFAULT_NUM_CTX=32768
+          RUNNING_IN_DOCKER=true
+          EOF
+          
+          echo "🐳 Building Docker image..."
+          docker build -t bolt-ai:latest --target bolt-ai-production .
+          
+          if [ $? -ne 0 ]; then
+            echo "❌ Docker build failed"
+            exit 1
+          fi
+          
+          echo "✅ Docker build completed successfully"
+          
+          # Start containers
+          echo "🚀 Starting Docker containers..."
+          docker-compose -f docker-compose.yaml --profile production up -d
+          
+          if [ $? -ne 0 ]; then
+            echo "❌ Failed to start containers"
+            docker-compose logs
+            exit 1
+          fi
+          
+          # Wait for container to start
+          echo "⏳ Waiting for containers to start..."
+          sleep 30
+          
+          # Check container status
+          echo "📊 Container status:"
+          docker-compose ps
+          
+          # Health check
+          echo "🔍 Running health check..."
+          for i in {1..10}; do
+            if curl -f http://localhost:${{ env.APP_PORT }} >/dev/null 2>&1; then
+              echo "✅ Health check passed!"
+              break
+            elif [ $i -eq 10 ]; then
+              echo "❌ Health check failed after 10 attempts"
+              echo "Container logs:"
+              docker-compose logs --tail=50
+              exit 1
+            else
+              echo "⏳ Health check attempt $i/10..."
+              sleep 10
+            fi
+          done
+          
+          # Setup reverse proxy if nginx is available
+          if command -v nginx &> /dev/null; then
+            echo "⚙️ Setting up reverse proxy..."
+            cat > /etc/nginx/sites-available/bolt-ai << EOF
+          server {
+              listen 80;
+              server_name ${{ env.DOMAIN }};
+          
+              location / {
+                  proxy_pass http://localhost:${{ env.APP_PORT }};
+                  proxy_http_version 1.1;
+                  proxy_set_header Upgrade \$http_upgrade;
+                  proxy_set_header Connection 'upgrade';
+                  proxy_set_header Host \$host;
+                  proxy_set_header X-Real-IP \$remote_addr;
+                  proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto \$scheme;
+                  proxy_cache_bypass \$http_upgrade;
+                  proxy_read_timeout 86400;
+                  proxy_send_timeout 86400;
+              }
+          }
+          EOF
+          
+            ln -sf /etc/nginx/sites-available/bolt-ai /etc/nginx/sites-enabled/ || true
+            nginx -t && systemctl reload nginx || echo "Nginx configuration issue"
+          fi
+          
+          # Final verification
+          echo "🔍 Final verification..."
+          echo "📊 Container status:"
+          docker-compose ps
+          
+          echo "🌐 Testing application:"
+          curl -s http://localhost:${{ env.APP_PORT }} | head -5 || echo "Application responding"
+          
+          echo "📊 System resources:"
+          df -h /
+          free -h
+          
+          echo "🎉 Deployment completed successfully!"
+          echo "🌍 Application is live at: http://${{ env.DOMAIN }}"
+          echo "🔗 Direct access: http://${{ env.VPS_HOST }}:${{ env.APP_PORT }}"
+
+    - name: 📊 Deployment Summary
+      if: always()
+      run: |
+        echo "## 🚀 Bolt AI Deployment Summary" >> $GITHUB_STEP_SUMMARY
+        echo "- **Environment:** Production" >> $GITHUB_STEP_SUMMARY
+        echo "- **Domain:** ${{ env.DOMAIN }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Server:** ${{ env.VPS_HOST }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Port:** ${{ env.APP_PORT }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Container:** Docker (isolated)" >> $GITHUB_STEP_SUMMARY
+        echo "- **Timestamp:** $(date +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+        echo "- **Commit:** ${GITHUB_SHA:0:7}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🔗 Quick Links" >> $GITHUB_STEP_SUMMARY
+        echo "- [🌐 Website](http://${{ env.DOMAIN }})" >> $GITHUB_STEP_SUMMARY
+        echo "- [🚀 Direct Access](http://${{ env.VPS_HOST }}:${{ env.APP_PORT }})" >> $GITHUB_STEP_SUMMARY
