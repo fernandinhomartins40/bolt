@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     make \
     g++ \
     git \
+    bash \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -41,9 +42,19 @@ ENV WRANGLER_SEND_METRICS=false \
 RUN mkdir -p /root/.config/.wrangler && \
     echo '{"enabled":false}' > /root/.config/.wrangler/metrics.json
 
-# Build with increased memory limit and skip workerd by removing problematic package
-RUN rm -rf node_modules/.pnpm/@cloudflare+workerd-linux-64@*/node_modules/@cloudflare/workerd-linux-64/bin/workerd || true
-RUN NODE_OPTIONS="--max-old-space-size=4096" CI=true pnpm run build
+# Create a custom build script that skips problematic workerd
+RUN echo '#!/bin/bash\n\
+set -e\n\
+export NODE_OPTIONS="--max-old-space-size=4096"\n\
+export CI=true\n\
+export SKIP_WRANGLER=true\n\
+export NO_CLOUDFLARE=true\n\
+echo "Building without Cloudflare workerd..."\n\
+npx remix vite:build --mode production\n\
+echo "Build completed successfully!"\n' > /tmp/build.sh && chmod +x /tmp/build.sh
+
+# Run the custom build script
+RUN /tmp/build.sh
 
 CMD [ "pnpm", "run", "dockerstart", "--", "--port", "3050"]
 
