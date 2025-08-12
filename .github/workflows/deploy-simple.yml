@@ -1,0 +1,73 @@
+name: 🚀 Deploy Bolt AI (Simplificado)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  VPS_HOST: '82.25.69.57'
+  VPS_USER: 'root'
+
+jobs:
+  deploy:
+    name: 🚀 Deploy Simples para VPS
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 🚀 Deploy via SSH
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ env.VPS_HOST }}
+        username: ${{ env.VPS_USER }}
+        password: ${{ secrets.VPS_PASSWORD }}
+        port: 22
+        timeout: 10m
+        script: |
+          echo "🚀 Iniciando deploy simplificado..."
+          
+          # Criar diretório
+          mkdir -p /opt/bolt-ai-simple
+          cd /opt/bolt-ai-simple
+          
+          # Instalar Docker se necessário
+          if ! command -v docker &> /dev/null; then
+            curl -fsSL https://get.docker.com -o get-docker.sh
+            sh get-docker.sh
+            systemctl start docker
+            systemctl enable docker
+          fi
+          
+          # Instalar Docker Compose se necessário
+          if ! command -v docker-compose &> /dev/null; then
+            curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+            chmod +x /usr/local/bin/docker-compose
+          fi
+          
+          # Parar containers existentes
+          docker-compose -f docker-compose.simple.yml down 2>/dev/null || true
+          docker container stop bolt-ai-app 2>/dev/null || true
+          docker container rm bolt-ai-app 2>/dev/null || true
+          
+          # Baixar código mais recente
+          rm -rf bolt-latest
+          git clone https://github.com/${{ github.repository }}.git bolt-latest
+          cd bolt-latest
+          
+          # Build e start com Docker Compose simples
+          echo "🐳 Iniciando containers..."
+          docker-compose -f docker-compose.simple.yml up -d --build
+          
+          # Aguardar inicialização
+          sleep 30
+          
+          # Verificar saúde
+          if curl -f http://localhost:3050 >/dev/null 2>&1; then
+            echo "✅ Deploy bem-sucedido!"
+            echo "🌍 Aplicação disponível em: http://${{ env.VPS_HOST }}:3050"
+            docker-compose -f docker-compose.simple.yml ps
+          else
+            echo "❌ Falha no health check"
+            docker-compose -f docker-compose.simple.yml logs --tail=20
+            exit 1
+          fi

@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  bolt-ai:
+    build:
+      context: .
+      dockerfile: Dockerfile.simple
+    container_name: bolt-ai-app
+    ports:
+      - "3050:3050"
+    environment:
+      - NODE_ENV=production
+      - PORT=3050
+      - MOONSHOT_API_KEY=sk-8KiLOYeaGy7jpHTfDkptnQeQZSu9EmoydYoHP0A0DmO4fmgv
+      - MOONSHOT_API_BASE_URL=https://api.moonshot.cn/v1
+      - RUNNING_IN_DOCKER=true
+      - VITE_LOG_LEVEL=info
+      - DEFAULT_NUM_CTX=32768
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3050"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - bolt-network
+
+networks:
+  bolt-network:
+    driver: bridge
+    name: bolt-isolated
