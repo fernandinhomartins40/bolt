@@ -1,0 +1,105 @@
+name: 🚀 Deploy Bolt AI (Ultra-Simples)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  VPS_HOST: '82.25.69.57'
+  VPS_USER: 'root'
+
+jobs:
+  deploy:
+    name: 🚀 Deploy Ultra-Simples para VPS
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 🚀 Deploy via SSH
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ env.VPS_HOST }}
+        username: ${{ env.VPS_USER }}
+        password: ${{ secrets.VPS_PASSWORD }}
+        port: 22
+        timeout: 10m
+        script: |
+          echo "🚀 Iniciando deploy ultra-simples..."
+          
+          # Criar diretório
+          mkdir -p /opt/bolt-ai-ultra
+          cd /opt/bolt-ai-ultra
+          
+          # Instalar Docker se necessário
+          if ! command -v docker &> /dev/null; then
+            curl -fsSL https://get.docker.com -o get-docker.sh
+            sh get-docker.sh
+            systemctl start docker
+            systemctl enable docker
+          fi
+          
+          # Parar containers existentes
+          docker container stop bolt-ai-app 2>/dev/null || true
+          docker container rm bolt-ai-app 2>/dev/null || true
+          
+          # Criar docker-compose.yml diretamente
+          cat > docker-compose.yml << 'EOF'
+          services:
+            bolt-ai:
+              image: ghcr.io/stackblitz-labs/bolt.diy:latest
+              container_name: bolt-ai-app
+              ports:
+                - "3050:5173"
+              environment:
+                - NODE_ENV=production
+                - PORT=5173
+                - MOONSHOT_API_KEY=sk-8KiLOYeaGy7jpHTfDkptnQeQZSu9EmoydYoHP0A0DmO4fmgv
+                - MOONSHOT_API_BASE_URL=https://api.moonshot.cn/v1
+                - RUNNING_IN_DOCKER=true
+                - VITE_LOG_LEVEL=info
+                - DEFAULT_NUM_CTX=32768
+              restart: unless-stopped
+              healthcheck:
+                test: ["CMD", "curl", "-f", "http://localhost:5173"]
+                interval: 30s
+                timeout: 10s
+                retries: 3
+              networks:
+                - bolt-network
+          
+          networks:
+            bolt-network:
+              driver: bridge
+              name: bolt-isolated
+          EOF
+          
+          # Instalar Docker Compose se necessário
+          if ! command -v docker-compose &> /dev/null; then
+            curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+            chmod +x /usr/local/bin/docker-compose
+          fi
+          
+          # Fazer pull da imagem e iniciar
+          echo "🐳 Fazendo pull da imagem oficial..."
+          docker pull ghcr.io/stackblitz-labs/bolt.diy:latest
+          
+          echo "🚀 Iniciando container..."
+          docker-compose up -d
+          
+          # Aguardar inicialização
+          sleep 45
+          
+          # Verificar saúde
+          if curl -f http://localhost:3050 >/dev/null 2>&1; then
+            echo "✅ Deploy bem-sucedido!"
+            echo "🌍 Aplicação disponível em: http://${{ env.VPS_HOST }}:3050"
+            docker-compose ps
+            docker-compose logs --tail=10
+          else
+            echo "❌ Falha no health check"
+            echo "Status dos containers:"
+            docker-compose ps
+            echo "Logs recentes:"
+            docker-compose logs --tail=20
+            exit 1
+          fi
